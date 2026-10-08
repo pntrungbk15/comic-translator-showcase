@@ -1,89 +1,90 @@
-# Comic Translator
+# ComicTranslator
 
-**Translate comics and manga on your own computer.** Comic Translator finds the speech balloons, reads the text,
-translates it, removes the original lettering from the artwork and letters the translation back in, with review and
-correction at every step, page by page. Built with [FluentQt](https://github.com/pntrungbk15/fluentqt-showcase) on PyQt5.
+**Translate manga, manhwa and comics on your own computer, with real models, and proofread them page by page.**
+ComicTranslator detects the text and balloons, reads them, translates them with a local language model, removes the
+original lettering, letters the translation back in, and gives a fast editor to check and fix every step. Its workflow
+is modelled on [Koharu](https://github.com/koharu-rs/koharu); it is built with
+[FluentQt](https://github.com/pntrungbk15/fluentqt-showcase) on PyQt5.
 
 ![Portfolio](https://img.shields.io/badge/portfolio-showcase_only-1F3A5F)
 ![Source](https://img.shields.io/badge/source-private-6B6B6B)
 ![Qt](https://img.shields.io/badge/Qt-PyQt5_5.15-41CD52)
-![OCR](https://img.shields.io/badge/OCR-RapidOCR_%7C_Manga_OCR_%7C_Tesseract-1F3A5F)
-![Inpainting](https://img.shields.io/badge/inpainting-LaMa_ONNX-6D28D9)
+![Models](https://img.shields.io/badge/models-local_(CPU_%7C_CUDA)-6D28D9)
 
-> **About this repository.** It presents Comic Translator through screenshots and a written overview. It contains no
-> source code: the application's source is private at this stage. The comic in the screenshots is drawn by the
-> project's own generator; no third-party artwork is shown.
+> **About this repository.** It presents ComicTranslator through screenshots and a written overview. It contains no
+> source code: the application's source is private at this stage. The comic pages in the screenshots are
+> *Pepper&Carrot* episode 3 by David Revoy (www.peppercarrot.com), CC BY 4.0, in its Japanese, Korean and Chinese
+> editions, processed by the application on a laptop CPU; the English translations are the models' own, uncorrected.
 
-![The editor: pages, the lettered preview and the proofreading panel](assets/comic-editor.png)
-
-![A page before and after: English to Vietnamese](assets/comic-before-after.png)
+![The editor: a Japanese page translated into English, a balloon selected with its source text and translation](assets/comic-editor.jpg)
 
 ## The workflow
 
 ```
-Import ─▶ Detect ─▶ Translate ─▶ Clean ─▶ Letter ─▶ Export
-pages     OCR +     LLM or       remove    fit the      PNG / JPEG / WebP,
-CBZ/ZIP   regions   Argos, with  text,     translation  CBZ, and text
-folders             glossary     rebuild   in each      layers
-                                 artwork   balloon
-                 ▲ review and correct at every step: regions, text, masks, lettering ▲
+Import ─▶ Detect ─▶ Read text ─▶ Translate ─┐
+            │                               ├─▶ Letter ─▶ Review ─▶ Export
+            └─────────▶ Clean ──────────────┘
 ```
 
-Pages flow through the steps **independently**: the first page is lettered and ready to proofread while later pages are
-still being read. Only what an edit affects runs again: changing a translation re-letters that page without cleaning it
-again; repainting a mask cleans it again, then re-letters it.
+Each page moves through the stages on its own, in warm worker processes that keep their models loaded, so the first
+page can be proofread while later pages are still being read. Any stages can run on the current page, selected pages,
+selected text regions or the whole project; OCR and translation results are cached, and text the user corrected is never
+overwritten.
 
 | At a glance | |
 |---|---|
-| **Text detection and OCR** | RapidOCR (detection and recognition), Manga OCR for Japanese including vertical text, or Tesseract; lines grouped into balloon-sized regions in reading order (right to left for manga). |
-| **Translation** | Any OpenAI-compatible endpoint (Ollama, LM Studio, llama.cpp or a hosted API) or offline Argos Translate. One request per page, with the previous page's lines as context and a project glossary of names and terms. |
-| **Text removal** | Text pixels found inside each region and filled by LaMa (neural, ONNX Runtime), OpenCV Telea or a built-in fill; mask painting to remove or protect artwork. |
-| **Lettering** | The translation fitted into the free space of each balloon, with fonts, sizing, alignment, colours and outline per project or per region. |
-| **Background work** | Detection, text removal and lettering run in warm worker processes (a model loads once per session); pause, resume, cancel, retry failed pages only; unfinished jobs reported after a crash. |
-| **Proofreading and editing** | OCR confidence flags, reviewed marks, region drawing and reordering, undo/redo for every edit, autosave. |
+| **Detection** | RT-DETR comic text and bubble detector (0.2 s a page on a CPU) or Koharu's RF-DETR layout model; a segmentation model marks the lettering's exact pixels. |
+| **OCR** | Hayai OCR (Japanese, Chinese, Korean, English), Manga OCR and RapidOCR, chosen per language, with a confidence per region. |
+| **Translation** | Local GGUF models through llama.cpp (LFM 2.5, Qwen 3.5, Gemma 4), OpenAI-compatible endpoints or Argos; glossary, previous-page context and instructions. |
+| **Cleaning** | LaMa manga and AOT (PyTorch), LaMa ONNX, OpenCV or a built-in fill, at the original resolution; brush, eraser, protect and an instant Repair brush on an undoable mask. |
+| **Lettering** | Fitted to each balloon; horizontal, vertical (CJK) or right-to-left, with outline, spacing, padding and rotation. |
+| **Proofreading** | A review queue across the project (missing translations, low OCR confidence, overflow, doubtful cleanup) with keyboard navigation. |
+| **Runtime** | CPU first; CUDA through PyTorch, ONNX Runtime and llama.cpp; a Low VRAM profile for 4 GB GPUs that keeps one model on the GPU at a time and unloads it when its stage is done. |
+| **Model manager** | Download, resume, cancel, update, remove and choose models, with source, licence, size and hardware needs, and recommendations for the detected hardware. |
 
 ## Screens
 
 | | |
 |---|---|
-| ![Projects](assets/comic-projects.png) | ![Review the OCR on the original page](assets/comic-review-original.png) |
-| **Projects:** covers, progress and engine status. | **Review:** numbered regions on the original page, source and translation side by side. |
-| ![Mask painting, dark theme](assets/comic-mask-dark.png) | ![The finished page](assets/comic-final.png) |
-| **Mask painting:** red marks text to remove, green protects artwork. | **Final:** the lettered page, with the project glossary open. |
-| ![Activity](assets/comic-activity.png) | ![Models](assets/comic-models.png) |
-| **Activity:** every page step with its state and duration, retry, and a log per task. | **Models:** which engines run on this computer and what each needs. |
-
-![The editor in the dark theme](assets/comic-editor-dark.png)
+| ![Start](assets/comic-start.jpg) | ![Processing](assets/comic-processing.jpg) |
+| **Start:** a new project beside the list of projects. | **Processing:** the run selector and Stop, live page states, the activity card. |
+| ![Review](assets/comic-review.jpg) | ![Compare](assets/comic-compare.jpg) |
+| **Review:** every issue in the project. | **Compare:** the original and the translation. |
+| ![Mask](assets/comic-mask.jpg) | ![Korean](assets/comic-editor-kr.jpg) |
+| **Mask:** brush (red) and protect (green). | **Korean:** low OCR confidence flagged in amber. |
+| ![Chinese](assets/comic-editor-cn.jpg) | ![Dark](assets/comic-editor-dark.jpg) |
+| **Chinese**, read with RapidOCR. | **Dark theme.** |
+| ![Models](assets/comic-models-dark.jpg) | ![Settings](assets/comic-settings.jpg) |
+| **Models:** source, licence, size and hardware. | **Settings → Pipeline.** |
 
 ## Architecture
 
 ```
-flow          one task per page and step, dependencies, warm stage workers, pause/cancel/retry
-pipeline      the steps: what each needs, its input fingerprint, and how its result is stored
-jobs/         one-off jobs (export, downloads, probes) and the worker process
-engines/      OCR, translation, inpainting, model downloads (imported only by workers)
-canvas/       the page editor: regions, masks, lettering preview, undo
-typeset       balloon lettering, shared by the preview and the export
-storage/      schema and repositories (projects, pages, regions, glossary, jobs, models)
+ui/           frameless window with a menu bar; Start, Editor and Settings views; floating tool rail and activity card
+canvas/       the page editor on FluentQt Pro's image viewer: regions, masks, lettering, tools, undo
+flow          one task per page and stage, dependencies, warm stage workers, GPU lifecycle policy
+pipeline      the stages: what each needs, its input fingerprint, how its result is stored
+engines/      detection, OCR, translation, inpainting, model catalog, hardware, cache (imported only by workers)
+storage/      schema migrations and repositories
+typeset       lettering shared by the editor and the export
 ```
 
-The GUI process never imports an OCR or inference runtime; engines live only in worker processes, so the editor starts
-and works even when no engine is installed.
+The window never loads a model, so it stays responsive while pages are processed, and a crash in a native library
+costs one page.
 
-## Performance
+## Measured
 
-Measured with the project's benchmark script:
+On a laptop CPU (i5-1235U, no GPU), with the CPU defaults:
 
-| Measurement | Result |
+| | |
 |---|---|
-| Open a 3000 × 4254 page | 160 ms |
-| Import a 200-page CBZ | 79 ms, worst GUI stall 12.5 ms |
-| 8 pages, RapidOCR + LaMa on CPU: first page lettered | **38 s** with the page flow (194 s when every step finishes for all pages first) |
-| 8 pages: all done | 188 s; worst GUI stall 22 ms |
+| Three Japanese pages, full pipeline | 86 s |
+| Repair brush, one stroke | about 2 s to the rebuilt page |
 
 ## Author
 
 Phạm Ngọc Trung · [github.com/pntrungbk15](https://github.com/pntrungbk15)
 
-All screenshots © Phạm Ngọc Trung. Shown here for portfolio purposes; no licence to the software is granted by this
-repository.
+Screenshots of the application © Phạm Ngọc Trung. The comic pages shown are *Pepper&Carrot* by David Revoy,
+www.peppercarrot.com, licensed CC BY 4.0, with translations by the Pepper&Carrot community. Shown here for portfolio
+purposes; no licence to the software is granted by this repository.
