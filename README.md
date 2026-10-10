@@ -63,7 +63,7 @@ overwritten.
 | Stage | CPU default | Alternatives |
 |---|---|---|
 | Detection | Comic text and bubble detector (RT-DETR-v2, int8 ONNX) | Koharu Layout RF-DETR Seg 2XL (PyTorch, `rfdetr` 1.7.0), RapidOCR text lines |
-| Text mask | Comic text detector (OpenCV DNN on the CPU) | layout masks, an estimate inside each box |
+| Text mask | Comic text detector (ONNX Runtime; OpenCV DNN without it) | layout masks, an estimate inside each box |
 | OCR | Hayai OCR v2; RapidOCR for Chinese and English | Manga OCR, Tesseract |
 | Translation | LFM 2.5 1.2B (GGUF, llama.cpp) | Qwen 3.5, Gemma 4, any GGUF file, OpenAI-compatible endpoints, Argos Translate |
 | Inpainting | AOT (PyTorch) | LaMa manga, LaMa (ONNX), OpenCV Telea, a built-in fill |
@@ -116,8 +116,8 @@ The base install starts the app with no AI runtime at all; the engines are added
 PyTorch's CPU index (PyPI's Linux wheels are the multi-GB CUDA builds), and llama-cpp-python from its maintainer's CPU
 wheel index. Only `opencv-python` is declared: having it and `opencv-python-headless` side by side breaks `cv2`.
 
-Verified: `uv lock --check` passes, and a sync with the `cpu` extra into an empty environment (Linux, Python 3.12)
-imports every engine module and passes the test suite.
+Verified: `uv lock --check` passes, and a sync with the `cpu` extra into an empty environment (Linux, and Windows 11,
+Python 3.12) imports every engine module and passes the test suite.
 
 ## Engineering notes
 
@@ -161,7 +161,7 @@ On a laptop CPU (i5-1235U, no GPU), with the CPU defaults:
 | Repair brush, one stroke | about 2 s to the rebuilt page |
 | Comic text and bubble detector | 0.2 s a page |
 | Koharu Layout RF-DETR Seg 2XL | 11–14 s a page |
-| Comic text detector: OpenCV DNN vs ONNX Runtime on the CPU | 4 s vs about 90 s a page |
+| Comic text detector (text mask) on the CPU: ONNX Runtime with subnormals flushed to zero, vs OpenCV DNN | 1.7–2 s vs 3.3–5 s a page |
 | Manga OCR / Hayai OCR v2 | 0.4 s / 0.8 s a balloon |
 | LFM 2.5 1.2B (Q4_K_M) translation | 2–3 s a page |
 | AOT / LaMa manga inpainting | about 4 s / 12 s a page |
