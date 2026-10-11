@@ -11,6 +11,7 @@ is modelled on [Koharu](https://github.com/koharu-rs/koharu); it is built with
 ![Qt](https://img.shields.io/badge/Qt-PyQt5_5.15-41CD52)
 ![Models](https://img.shields.io/badge/models-local,_CPU_first-6D28D9)
 ![Setup](https://img.shields.io/badge/setup-uv_lock-DE5FE9)
+![Windows](https://img.shields.io/badge/Windows-Nuitka_%2B_Inno_Setup-0078D4)
 
 > **About this repository.** It presents ComicTranslator through screenshots and a written overview. It contains no
 > source code: the application's source is private at this stage. The comic pages in the screenshots are
@@ -41,7 +42,10 @@ overwritten.
 | **Lettering** | Fitted to each balloon; horizontal, vertical (CJK) or right-to-left, with outline, spacing, padding and rotation. |
 | **Proofreading** | A review queue across the project (missing translations, low OCR confidence, overflow, doubtful cleanup) with keyboard navigation. |
 | **Runtime** | CPU first. CUDA paths through PyTorch, ONNX Runtime and llama.cpp, and a Low VRAM profile for 4 GB GPUs that keeps one model on the GPU at a time, are implemented and covered by profile tests but have not yet been run on an NVIDIA GPU. |
-| **Model manager** | Download, resume, cancel, retry, update, remove and choose models, with source, licence, size and hardware needs, recommendations for the detected hardware, and each model's state read from disk. |
+| **Model manager** | Download, resume, cancel, retry, update, remove and choose models, with source, licence, size and hardware needs, recommendations for the detected hardware and installed engines, and each model's state read from disk: downloaded, loading, or loaded, with the device and runtime it really runs on. |
+| **Models in memory** | A loaded model serves every later page; models can load before the first page (on request, when a project opens, or at start-up) and stay as long as chosen. Idle stages are unloaded to make room for a stage that needs memory, and a page that runs out of memory is retried once after freeing them. |
+| **Engine runtimes** | The Windows app runs ONNX Runtime, OpenCV, RapidOCR and llama.cpp by itself; the PyTorch engines (CPU, or NVIDIA CUDA 12) install from Settings in one step, with the size shown first, into the user's data folder. No Python, CUDA toolkit or compiler needed. |
+| **Desktop** | A splash screen while the window builds; one running copy; an optional notification area icon that keeps processing and loaded models alive while the window is closed, with Quit that ends every worker. |
 
 ## Screens
 
@@ -57,6 +61,10 @@ overwritten.
 | **Chinese**, read with RapidOCR. | **Dark theme.** |
 | ![Models](assets/comic-models-dark.jpg) | ![Settings](assets/comic-settings.jpg) |
 | **Models:** source, licence, size and hardware for each model; the top card lists the engines that need no download and why one is not ready (here: Tesseract not installed). | **Settings → Pipeline.** |
+| ![Runtime](assets/comic-runtime.jpg) | ![Engine runtimes](assets/comic-engines.jpg) |
+| **Settings → Runtime:** the engine runtime, the hardware profile, when models load and how long idle models stay, and the notification area (disabled here: the capture ran without a desktop). | **Engine runtimes:** sizes and requirements before anything downloads; the CUDA runtime explains why it is unavailable on a computer without an NVIDIA GPU. |
+| ![A loaded model](assets/comic-models-loaded.jpg) | |
+| **Downloaded vs loaded:** AOT loaded before the first page, with where it really runs ("loaded on the CPU (PyTorch)"). | |
 
 ## Models and engines
 
@@ -130,25 +138,56 @@ Python 3.12) imports every engine module and passes the test suite.
   on Windows PyTorch, before they touch Qt.
 * **OpenCV environment leakage.** `opencv-python` points Qt at its own plugins when imported; worker environments drop
   those variables before Qt starts.
-* **Packaged builds.** `deploy/build.py` builds a standalone folder with Nuitka and then launches it (start, worker
-  probe, a self-test that processes two sample pages). PyTorch, llama.cpp and the models are never bundled: those
-  engines run in a Python chosen in Settings, from a copy of the app's sources placed beside the executable, which an
-  earlier build was missing. A full Nuitka build of the current version has not been run.
+* **Where a model really runs.** PyTorch, ONNX Runtime and llama.cpp each fall back to the CPU by themselves (a missing
+  CUDA library, too little VRAM). Every worker therefore reads the device back from the loaded object (the session's
+  first execution provider, the parameters' device, the layers llama.cpp offloaded) and reports it after each page; the
+  interface shows that report, never the requested setting.
+* **Engine runtimes without file locks.** On Windows a folder whose DLLs a process has loaded cannot be renamed or
+  deleted, so each runtime install goes into a new folder and the old one is deleted at the next start, before any
+  worker runs. The install runs in the app's own worker, never in the runtime it replaces, and cancelling it kills uv's
+  whole process tree.
+* **A packaging bug the smoke test caught.** In the first Nuitka build, every engine looked broken: the compiled code
+  lost the `importlib.metadata` attribute that a module-level import should have provided, and the engine check raised.
+  The metadata lookup is now imported where it is used and treated as optional, and the smoke test runs the packaged
+  worker's engine check on every build.
+* **Licences of compiled-in packages.** Nuitka compiles pure-Python packages into the executable, so scanning the build
+  folder missed some, and several wheels (ONNX Runtime, PyQt5) declare their licence only in metadata. The build reads
+  Nuitka's compilation report, copies each bundled package's licence files and writes a list of their declared licences.
+
+## Windows build and installer
+
+One command on the development computer (`deploy\build_windows.cmd`) creates a locked build environment with uv,
+compiles the app with **Nuitka** into a standalone folder, checks and runs it, and packs it with **Inno Setup**:
+
+| | |
+|---|---|
+| Build | Nuitka 4.2.2 standalone folder, Python 3.12, MSVC 14.4; 427 MB with the CPU engines (ONNX Runtime, OpenCV, RapidOCR, llama.cpp) |
+| Installer | 108 MB; per-user (no administrator rights) or for all users; Start menu entry; updates in place; refuses to run while the app is open |
+| Never bundled | PyTorch, CUDA libraries, model weights; the PyTorch engines install on request, with their size shown first |
+| User data | `%LOCALAPPDATA%\FluentComicTranslator`: kept by updates and by the uninstaller (which only offers to delete the engine runtimes) |
+
+Every build is smoke-tested before it is released: the packaged app starts, shows its window (1.7–2.8 s to the
+window on the build machine) and quits; its worker reports the compiled-in engines; it processes two real pages from its
+own window (loading the models first, then detect, read, translate, clean, letter, export as CBZ) with the built-in
+engines and again with the PyTorch engine runtime. The installer was installed, upgraded over and uninstalled silently
+in a test folder, with the user's data left in place.
 
 ## Architecture
 
 ```
 ui/           frameless window with a menu bar; Start, Editor and Settings views; floating tool rail and activity card
 canvas/       the page editor on FluentQt Pro's image viewer: regions, masks, lettering, tools, undo
-flow          one task per page and stage, dependencies, warm stage workers, GPU lifecycle policy
-pipeline      the stages: what each needs, its input fingerprint, how its result is stored
+flow          one task per page and stage, dependencies, warm stage workers and their states, memory and GPU policy
+pipeline      the stages: what each needs, its input fingerprint, how its result is stored, which models it loads
+enginesetup   optional engine runtimes: a standalone Python with the locked PyTorch packages, installed with uv
 engines/      detection, OCR, translation, inpainting, model catalog, hardware, cache (imported only by workers)
 storage/      schema migrations and repositories
 typeset       lettering shared by the editor and the export
 ```
 
 The window never loads a model, so it stays responsive while pages are processed, and a crash in a native library
-costs one page.
+costs one page. Start-up opens the database and builds the window behind a splash screen; models load when a page
+needs them or when the user asks, never before the window is usable.
 
 ## Measured
 
@@ -165,6 +204,33 @@ On a laptop CPU (i5-1235U, no GPU), with the CPU defaults:
 | Manga OCR / Hayai OCR v2 | 0.4 s / 0.8 s a balloon |
 | LFM 2.5 1.2B (Q4_K_M) translation | 2–3 s a page |
 | AOT / LaMa manga inpainting | about 4 s / 12 s a page |
+| First page with the stage's models loaded in advance vs a cold stage (Hayai OCR / AOT / LFM 2.5 / detection) | 2.7 s vs 6.8 s / 2.5 s vs 3.3 s / 2.0 s vs 3.0 s / 1.9 s vs 2.4 s |
+| CPU engine runtime install (download and install, Windows 11, home connection) | 482 s; 1.6 GB on disk |
+
+## Release notes
+
+**0.3.0** (Windows build and installer)
+
+* Windows installer (Inno Setup) around a Nuitka standalone build that runs on a computer without Python.
+* Engine runtimes: the PyTorch engines (CPU, about 400 MB to download; or NVIDIA CUDA 12, about 3.6 GB) install from
+  Settings with uv into the user's data folder, from package lists locked with the project; offline install from a
+  packed runtime.
+* Models in memory: downloaded vs loaded states with the device each model really runs on; optional loading before the
+  first page; a configurable time idle models stay; idle stages unloaded to make room; one retry after running out of
+  memory.
+* Splash screen, single running copy, optional notification area icon with Quit that ends every worker; notifications
+  when pages finish while the window is hidden.
+* First-run guidance on the start screen: which stages are ready for the user's language, and one-click actions for
+  the rest.
+
+## Known limitations
+
+* The CUDA paths and the CUDA engine runtime have not been run on an NVIDIA GPU (the development laptop has none); the
+  CUDA package list was checked to resolve on Windows. Intel and AMD GPUs are not used.
+* Japanese and Korean OCR need the PyTorch engine runtime (a download); the built-in RapidOCR reads Chinese and English.
+* The installer is not code-signed, so Windows SmartScreen warns on first run. Installers are not published here:
+  the build includes FluentQt Pro, whose distribution terms are decided separately.
+* Windows and Linux only; the Windows build was tested on Windows 11 (x64).
 
 ## Author
 
